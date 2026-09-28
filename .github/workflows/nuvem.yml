@@ -1,0 +1,79 @@
+name: Controle de Gastos (nuvem)
+
+on:
+  schedule:
+    # A cada 4 h (horários em UTC). 23:17 UTC = 20:17 em Brasília, logo depois do resumo diário padrão.
+    - cron: "17 3,7,11,15,19,23 * * *"
+  workflow_dispatch: {}
+  push:
+    branches: [main]
+    paths: ["nuvem/ajustes.enc"]
+
+permissions:
+  contents: write
+  pages: write
+  id-token: write
+
+concurrency:
+  group: nuvem
+  cancel-in-progress: false
+
+jobs:
+  atualizar:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    environment:
+      name: github-pages
+      url: ${{ steps.deploy.outputs.page_url }}
+    env:
+      TZ: America/Sao_Paulo
+      NUVEM_SENHA: ${{ secrets.NUVEM_SENHA }}
+      PLUGGY_CLIENT_ID: ${{ secrets.PLUGGY_CLIENT_ID }}
+      PLUGGY_CLIENT_SECRET: ${{ secrets.PLUGGY_CLIENT_SECRET }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Baixar estado anterior (branch dados)
+        run: |
+          mkdir -p estado
+          if git ls-remote --exit-code --heads origin dados >/dev/null; then
+            git fetch -q --depth 1 origin dados
+            git show origin/dados:financas.db.enc > estado/financas.db.enc
+          fi
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - run: pip install --quiet cryptography
+
+      - name: Sincronizar, alertar e gerar o painel
+        run: python nuvem_job.py
+
+      - name: Salvar estado (branch dados, sem histórico)
+        run: |
+          cd estado
+          git init -q -b dados
+          git config user.name "controle-de-gastos[bot]"
+          git config user.email "controle-de-gastos@users.noreply.github.com"
+          git add financas.db.enc
+          git commit -q -m "estado"
+          git push -q -f "https://x-access-token:${{ secrets.GITHUB_TOKEN }}@github.com/${{ github.repository }}.git" dados
+
+      - name: Manter o agendamento ativo
+        # O GitHub desliga agendamentos de repositórios públicos após 60 dias sem commits.
+        run: |
+          last=$(git log -1 --format=%ct)
+          if [ $(( $(date +%s) - last )) -gt $(( 45 * 86400 )) ]; then
+            git config user.name "controle-de-gastos[bot]"
+            git config user.email "controle-de-gastos@users.noreply.github.com"
+            git commit -q --allow-empty -m "manter agendamento ativo"
+            git push -q
+          fi
+
+      - uses: actions/configure-pages@v5
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: site
+      - id: deploy
+        uses: actions/deploy-pages@v4

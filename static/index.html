@@ -1,0 +1,279 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Controle de Gastos</title>
+  <meta name="theme-color" content="#0f766e">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-title" content="Gastos">
+  <link rel="manifest" href="manifest.webmanifest">
+  <link rel="icon" href="icons/icon-192.png">
+  <link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
+  <link rel="stylesheet" href="styles.css">
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.4/dist/chart.umd.min.js"></script>
+  <script src="https://cdn.pluggy.ai/pluggy-connect/latest/pluggy-connect.js"></script>
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand">
+      <span class="logo">R$</span>
+      <div>
+        <h1>Controle de Gastos</h1>
+        <p class="muted small" id="source-label">Open Finance</p>
+      </div>
+    </div>
+    <div class="top-actions">
+      <select id="mode" aria-label="Ver por" title="Compras no cartão: contar no mês da fatura ou na data da compra">
+        <option value="fatura">Por fatura</option>
+        <option value="compra">Por compra</option>
+      </select>
+      <select id="month" aria-label="Mês"></select>
+      <button class="btn ghost edit-only" id="btn-sync" title="Buscar transações novas nos bancos">Sincronizar</button>
+      <button class="btn ghost edit-only" data-action="import">Importar extrato</button>
+      <button class="btn primary edit-only" id="btn-connect">Conectar banco</button>
+    </div>
+  </header>
+
+  <nav class="tabs" role="tablist">
+    <button class="tab active" data-tab="painel">Painel</button>
+    <button class="tab" data-tab="cortar">Onde cortar</button>
+    <button class="tab" data-tab="transacoes">Transações</button>
+    <button class="tab" data-tab="orcamentos">Orçamentos</button>
+    <button class="tab edit-only" data-tab="conexoes">Conexões</button>
+    <button class="tab edit-only" data-tab="alertas">Alertas e celular</button>
+  </nav>
+
+  <main>
+    <!-- Estado vazio -->
+    <section id="empty" class="card empty hidden">
+      <h2>Comece conectando seu banco</h2>
+      <p>O app usa o <strong>Open Finance Brasil</strong> via Pluggy: você autoriza no app do seu banco,
+        e só leitura de saldos e extratos é compartilhada. Nenhuma senha fica salva aqui.</p>
+      <div class="row gap wrap">
+        <button class="btn primary" data-action="connect">Conectar via Meu Pluggy (grátis)</button>
+        <button class="btn ghost" data-action="import">Importar extrato OFX/CSV</button>
+        <button class="btn ghost" data-action="demo">Ver com dados de demonstração</button>
+      </div>
+      <p class="muted small" id="empty-hint"></p>
+    </section>
+
+    <!-- Painel -->
+    <section id="tab-painel" class="tab-panel">
+      <div id="demo-banner" class="banner hidden">
+        Você está vendo <strong>dados de demonstração</strong>. Conecte seu banco para usar os seus.
+      </div>
+      <div class="kpis">
+        <div class="card kpi"><span class="muted">Entradas</span><strong id="k-income">–</strong></div>
+        <div class="card kpi"><span class="muted">Gastos</span><strong id="k-expenses">–</strong><small id="k-projection" class="muted"></small></div>
+        <div class="card kpi"><span class="muted">Saldo do mês</span><strong id="k-balance">–</strong><small id="k-rate" class="muted"></small></div>
+        <div class="card kpi highlight"><span>Economia possível</span><strong id="k-saving">–</strong><small>por mês, com os cortes sugeridos</small></div>
+      </div>
+
+      <div class="grid-2">
+        <div class="card">
+          <h3>Para onde vai o dinheiro</h3>
+          <div class="chart-wrap"><canvas id="chart-categories"></canvas></div>
+        </div>
+        <div class="card">
+          <h3>Entradas x gastos (6 meses)</h3>
+          <div class="chart-wrap"><canvas id="chart-trend"></canvas></div>
+        </div>
+      </div>
+
+      <div class="grid-2">
+        <div class="card">
+          <h3>Essencial x não essencial</h3>
+          <p class="muted small">Referência: regra 50/30/20 — 50% necessidades, 30% desejos, 20% poupança.</p>
+          <div id="groups"></div>
+        </div>
+        <div class="card">
+          <h3>Principais alertas</h3>
+          <div id="top-insights"></div>
+          <button class="btn link" data-goto="cortar">Ver todas as recomendações →</button>
+        </div>
+      </div>
+
+      <div class="card">
+        <h3>Gastos por categoria</h3>
+        <table class="table" id="cat-table">
+          <thead><tr><th>Categoria</th><th class="num">Mês</th><th class="num">Média 3m</th><th class="num">% dos gastos</th><th>Orçamento</th></tr></thead>
+          <tbody></tbody>
+        </table>
+      </div>
+    </section>
+
+    <!-- Onde cortar -->
+    <section id="tab-cortar" class="tab-panel hidden">
+      <div class="card saving-hero">
+        <div>
+          <span class="muted">Economia estimada se seguir as recomendações</span>
+          <strong id="saving-month">–</strong>
+          <span id="saving-year" class="muted"></span>
+        </div>
+        <p class="muted small">Estimativas conservadoras baseadas no seu histórico. Itens sobrepostos (orçamento, 50/30/20) não entram na soma.</p>
+      </div>
+      <div id="insights-list"></div>
+    </section>
+
+    <!-- Transações -->
+    <section id="tab-transacoes" class="tab-panel hidden">
+      <div class="card">
+        <div class="row gap wrap filters">
+          <input type="search" id="tx-search" placeholder="Buscar descrição…">
+          <select id="tx-category"><option value="">Todas as categorias</option></select>
+          <button class="btn ghost" id="btn-export">Exportar CSV</button>
+        </div>
+        <p class="muted small edit-only">Categoria errada? Troque no seletor — marque “todas parecidas” para o app aprender a regra.</p>
+        <label class="small check edit-only"><input type="checkbox" id="tx-similar" checked> Aplicar a todas parecidas</label>
+        <div class="table-scroll">
+          <table class="table" id="tx-table">
+            <thead><tr><th>Data</th><th>Descrição</th><th>Categoria</th><th class="num">Valor</th></tr></thead>
+            <tbody></tbody>
+          </table>
+        </div>
+        <p class="muted small" id="tx-count"></p>
+      </div>
+    </section>
+
+    <!-- Orçamentos -->
+    <section id="tab-orcamentos" class="tab-panel hidden">
+      <div class="card">
+        <h3>Limites mensais por categoria</h3>
+        <p class="muted small">Defina quanto aceita gastar por mês. O painel avisa quando passar de 85% e quando estourar.
+          Deixe vazio para não controlar. A sugestão é a sua média dos últimos 3 meses menos 10%.</p>
+        <form id="budget-form">
+          <table class="table">
+            <thead><tr><th>Categoria</th><th class="num">Gasto no mês</th><th class="num">Sugestão</th><th class="num">Limite (R$)</th></tr></thead>
+            <tbody></tbody>
+          </table>
+          <div class="row gap edit-only"><button class="btn primary" type="submit">Salvar orçamentos</button><span id="budget-msg" class="muted small"></span></div>
+        </form>
+      </div>
+    </section>
+
+    <!-- Alertas e celular -->
+    <section id="tab-alertas" class="tab-panel hidden">
+      <div class="card">
+        <h3>Alertas no WhatsApp</h3>
+        <p class="muted small" id="wa-status"></p>
+        <details class="small" id="wa-howto">
+          <summary><strong>Como ativar (grátis, 2 minutos)</strong></summary>
+          <ol class="steps">
+            <li>No celular, salve o contato <strong>+34 644 95 42 75</strong> (CallMeBot).</li>
+            <li>Mande para ele no WhatsApp: <code>I allow callmebot to send me messages</code></li>
+            <li>Em até 2 minutos ele responde com a sua <strong>apikey</strong>. Cole abaixo com o seu número.</li>
+          </ol>
+          <p class="muted">O CallMeBot é gratuito para uso pessoal e só manda mensagens para o seu próprio número.
+            O texto dos alertas passa pelos servidores dele.</p>
+        </details>
+        <form id="wa-form" class="form-grid">
+          <label>Seu WhatsApp (com DDD)<input name="whatsapp_phone" type="tel" placeholder="34 99999-9999" autocomplete="tel"></label>
+          <label>Apikey do CallMeBot<input name="callmebot_apikey" type="text" autocomplete="off" placeholder="ex.: 123456"></label>
+          <label class="check"><input type="checkbox" name="alertas_ativos"> Alertas ligados</label>
+          <label>Avisar gastos a partir de (R$)<input name="alerta_valor_minimo" type="number" min="0" step="10"></label>
+          <label class="check"><input type="checkbox" name="alerta_tarifas"> Tarifas, juros e IOF</label>
+          <label class="check"><input type="checkbox" name="alerta_orcamento"> Orçamento em 85% e estourado</label>
+          <label class="check"><input type="checkbox" name="alerta_assinaturas"> Assinatura que aumentou de preço</label>
+          <label class="check"><input type="checkbox" name="resumo_diario"> Resumo diário</label>
+          <label>Hora do resumo (0–23)<input name="resumo_hora" type="number" min="0" max="23"></label>
+          <div class="row gap wrap full">
+            <button class="btn primary" type="submit">Salvar</button>
+            <button class="btn ghost" type="button" id="btn-wa-test">Enviar mensagem de teste</button>
+            <button class="btn ghost" type="button" id="btn-wa-summary">Enviar resumo agora</button>
+          </div>
+        </form>
+        <p class="muted small">Os alertas saem quando o app encontra lançamentos novos (a cada <span id="sync-hours">4</span> h, com o app aberto no computador).
+          O Meu Pluggy atualiza os bancos 1x por dia, então um gasto pode levar até 1 dia para ser avisado.</p>
+      </div>
+
+      <div class="card">
+        <h3>Celular sem o computador ligado (nuvem)</h3>
+        <p class="muted small" id="nuvem-status">Carregando…</p>
+        <div class="row gap wrap">
+          <button class="btn primary" type="button" id="btn-nuvem-enviar">Enviar ajustes agora</button>
+          <a class="btn ghost" id="nuvem-link" href="#" target="_blank" rel="noopener" hidden>Abrir o painel da nuvem</a>
+        </div>
+        <p class="muted small">O GitHub atualiza os bancos, manda os alertas e publica o painel a cada 4 h, mesmo com este computador desligado.
+          Categorias, orçamentos e alertas que você mudar aqui sobem sozinhos em ~20 s. Configuração: veja o README, seção “Modo nuvem”.</p>
+      </div>
+
+      <div class="card">
+        <h3>App no celular (com o computador ligado)</h3>
+        <div id="pin-box">
+          <p class="small"><strong>1. Crie um PIN</strong> — protege o painel quando aberto fora do computador.</p>
+          <form id="pin-form" class="row gap wrap">
+            <input id="pin-new" type="password" inputmode="numeric" pattern="[0-9]*" minlength="6" maxlength="12"
+                   placeholder="6 a 12 números" autocomplete="new-password" aria-label="Novo PIN">
+            <button class="btn ghost" type="submit" id="pin-btn">Salvar PIN</button>
+            <span class="muted small" id="pin-msg"></span>
+          </form>
+        </div>
+        <ol class="steps small" start="2">
+          <li>Instale o <a href="https://tailscale.com/download" target="_blank" rel="noopener">Tailscale</a> (grátis)
+            <strong>no computador e no celular</strong> e entre com a mesma conta (Google, por exemplo). Ele cria uma rede privada
+            só entre os seus aparelhos — o painel não fica exposto na internet.</li>
+          <li>No computador, abra o Prompt de Comando e rode <code>tailscale serve --bg 8765</code>.
+            Ele mostra um endereço como <code>https://seu-pc.xxxx.ts.net</code>.</li>
+          <li>No celular, abra esse endereço, digite o PIN e toque em
+            <strong>“Adicionar à tela inicial”</strong> (Android: menu ⋮ do Chrome · iPhone: botão Compartilhar do Safari).</li>
+        </ol>
+        <p class="muted small">O painel no celular funciona enquanto o computador estiver ligado com o app aberto.
+          Para ele abrir sozinho quando o Windows ligar, rode uma vez o arquivo <code>instalar-inicio-automatico.bat</code>.</p>
+      </div>
+    </section>
+
+    <!-- Conexões -->
+    <section id="tab-conexoes" class="tab-panel hidden">
+      <div class="card">
+        <h3>Bancos conectados</h3>
+        <div id="connections"></div>
+        <div class="row gap wrap">
+          <button class="btn primary" data-action="connect">Conectar outro banco</button>
+          <button class="btn ghost" data-action="import">Importar extrato OFX/CSV</button>
+          <button class="btn ghost" data-action="demo">Carregar dados de demonstração</button>
+          <button class="btn danger" id="btn-clear">Apagar todos os dados locais</button>
+        </div>
+        <form id="item-form" class="row gap wrap" style="margin-top:16px">
+          <label class="small muted" for="item-id" style="flex-basis:100%">
+            Já autorizou pelo painel da Pluggy? Cole o <strong>ID da conexão (itemId)</strong> que aparece em dashboard.pluggy.ai:
+          </label>
+          <input type="search" id="item-id" placeholder="ex.: 3f1c2a9e-7b1d-4c2e-9a8f-0123456789ab" style="flex:1;min-width:260px">
+          <button class="btn ghost" type="submit">Adicionar conexão</button>
+        </form>
+      </div>
+      <div class="card">
+        <h3>Opção 1 — Open Finance grátis com o Meu Pluggy</h3>
+        <ol class="steps">
+          <li>Crie sua conta em <a href="https://meu.pluggy.ai" target="_blank" rel="noopener">meu.pluggy.ai</a> e conecte lá os seus bancos (a autorização é feita no app do banco).</li>
+          <li><strong>Importante:</strong> só conectar no Meu Pluggy não basta. Aqui, clique em <strong>Conectar banco</strong>, entre com a mesma conta do Meu Pluggy e escolha o banco que quer compartilhar com este app. Espere a mensagem de “transações importadas”.</li>
+          <li>Repita o passo 2 para cada banco (uma conexão por banco).</li>
+          <li>Os dados são atualizados pelo Meu Pluggy uma vez por dia; use <strong>Sincronizar</strong> para trazê-los para o app.</li>
+        </ol>
+        <p class="muted small">Se o login abrir em uma janela pop-up, permita pop-ups para este endereço no navegador.</p>
+      </div>
+      <div class="card">
+        <h3>Opção 2 — Importar o extrato (sem cadastro nenhum)</h3>
+        <ol class="steps">
+          <li>No app ou internet banking, exporte o extrato ou a fatura em <strong>OFX</strong> (Itaú, Bradesco, BB, Santander, Caixa, Inter, C6…) ou <strong>CSV</strong> (Nubank: conta e fatura, por e-mail ou pelo site).</li>
+          <li>Clique em <strong>Importar extrato</strong> e selecione um ou vários arquivos. Pode importar de novo depois: transações repetidas não são duplicadas.</li>
+        </ol>
+      </div>
+      <div class="card">
+        <h3>Como funciona a conexão</h3>
+        <ol class="steps">
+          <li>O app pede à Pluggy (instituição participante do Open Finance) um token temporário.</li>
+          <li>Você escolhe o banco e autoriza o compartilhamento <strong>somente leitura</strong> no app do próprio banco.</li>
+          <li>As transações dos últimos 12 meses são baixadas e ficam salvas só neste computador (<code>data/financas.db</code>).</li>
+          <li>Você pode revogar o consentimento a qualquer momento no app do banco, em “Open Finance”.</li>
+        </ol>
+      </div>
+    </section>
+  </main>
+
+  <input type="file" id="file-input" accept=".ofx,.qfx,.csv,.txt" multiple hidden>
+  <div id="toast" class="toast hidden" role="status"></div>
+  <script src="app.js"></script>
+</body>
+</html>

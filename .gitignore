@@ -1,0 +1,10 @@
+.env
+data/
+__pycache__/
+*.pyc
+# gerados pelo robô da nuvem (nunca versionar)
+estado/
+site/
+*.db
+*.log
+*.pdf

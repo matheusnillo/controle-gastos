@@ -1,0 +1,49 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#0f766e">
+  <title>Controle de Gastos</title>
+  <link rel="manifest" href="manifest.webmanifest">
+  <link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
+  <link rel="stylesheet" href="styles.css">
+  <style>
+    .login { max-width: 360px; margin: 12vh auto 0; padding: 0 16px; text-align: center; }
+    .login .logo { margin: 0 auto 16px; width: 56px; height: 56px; font-size: 20px; }
+    .login input { width: 100%; font-size: 24px; letter-spacing: .4em; text-align: center; padding: 12px; margin: 16px 0 12px; }
+    .login .btn { width: 100%; padding: 12px; font-size: 16px; }
+    .login .erro { color: var(--bad); min-height: 1.5em; }
+  </style>
+</head>
+<body>
+  <form class="login" id="f">
+    <div class="logo">R$</div>
+    <h2>Controle de Gastos</h2>
+    <p class="muted">Digite o seu PIN para ver o painel.</p>
+    <input id="pin" type="password" inputmode="numeric" pattern="[0-9]*" autocomplete="current-password"
+           minlength="6" maxlength="12" required autofocus aria-label="PIN">
+    <button class="btn primary" type="submit">Entrar</button>
+    <p class="erro small" id="erro" role="alert"></p>
+  </form>
+  <script>
+    document.getElementById("f").addEventListener("submit", async (e) => {
+      e.preventDefault();
+      const erro = document.getElementById("erro");
+      erro.textContent = "";
+      try {
+        const res = await fetch("api/login", {
+          method: "POST", headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ pin: document.getElementById("pin").value }),
+        });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.erro || "Não foi possível entrar.");
+        location.replace("./");
+      } catch (err) {
+        erro.textContent = err.message === "Failed to fetch"
+          ? "O computador está desligado ou o app não está aberto." : err.message;
+      }
+    });
+  </script>
+</body>
+</html>
